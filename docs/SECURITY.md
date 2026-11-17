@@ -1,23 +1,16 @@
-# Security notes
+# Security & Threat Model
 
-## Threat model
+## Defended Threats
 
-`github.com/Trysac/u917-s3-lite-object-store` is a pure library without I/O. The main risks are:
+- **Forged or Tampered Requests**: Verified using AWS Signature Version 4. Requests with `x-amz-content-sha256` digest must match body hash; otherwise 400 `XAmzContentSHA256Mismatch` is returned.
+- **Signature Timing Attacks**: Signatures are compared using constant-time `crypto/hmac.Equal`.
+- **Expired Presigned URLs & Clock Skew**: Requests are strictly validated against the server clock (±15 minutes skew). Presigned URLs enforce `X-Amz-Expires` (1-604800s); expired URLs return 403 `AccessDenied`.
+- **Filesystem Path Traversal**: `DirStore` uses hashed object keys (SHA-256) for storage paths, effectively neutralizing directory traversal attempts like `../../etc/passwd`.
+- **Denial of Service**: Request bodies are capped via `http.MaxBytesReader` (default 64 MiB). Multipart uploads are limited to 1000 in-progress operations. Memory stores enforce hard byte limits.
+- **Secret Leakage**: The CLI reads the secret key from `S3LITE_SECRET`, preventing leakage via process lists. Event hooks never expose sensitive headers or credentials.
 
-- **Supply chain**: a compromised dependency or CI action. Mitigation: standard library only,
-  `go.sum` verification, `govulncheck` in the local gates, Dependabot weekly updates, actions
-  pinned by commit SHA, minimal workflow permissions.
-- **Leaked secrets**: tokens committed by mistake. Mitigation: `gitleaks` runs in the local gates
-  and in CI; `.env` files are git-ignored.
-- **Insecure code**: disabled TLS verification, weak crypto, command injection. Mitigation: a
-  `security` gate (gosec, high severity fails, `#nosec` ignored); fix the code instead of silencing
-  it.
-- **Untrusted input**: callers may pass hostile strings. Mitigation: validate input and return
-  explicit errors; never use `unsafe` or `os/exec` with untrusted data.
+## Out of Scope / Not Defended
 
-## Publishing
-
-Releases are git tags served through the Go module proxy and checksum database. No registry token
-is stored in the repository.
-
-To report a vulnerability, see [SECURITY.md](../SECURITY.md).
+- **Replay Attacks**: Valid requests replayed within the 15-minute skew window or before presigned URL expiration are accepted.
+- **Transport Layer Security (TLS)**: Handlers communicate via HTTP; users must deploy behind a TLS termination proxy.
+- **IAM and ACLs**: All valid credentials possess full, unrestricted access to all buckets and objects within the instance.

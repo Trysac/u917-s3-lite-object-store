@@ -1,55 +1,47 @@
 # s3-lite-object-store
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Trysac/u917-s3-lite-object-store.svg)](https://pkg.go.dev/github.com/Trysac/u917-s3-lite-object-store)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/Trysac/u917-s3-lite-object-store/actions/workflows/ci.yml/badge.svg)](https://github.com/Trysac/u917-s3-lite-object-store/actions/workflows/ci.yml)
+Object store server speaking a subset of the S3 REST API with SigV4 authentication, presigned URLs, multipart uploads and ListObjectsV2.
 
-Object store server speaking a subset of the S3 REST API with SigV4 authentication, presigned URLs, multipart uploads and ListObjectsV2
+## Why `s3-lite-object-store`?
 
-## Problem
+Tests and small deployments that talk to S3 need a local server, and full S3 clones are heavy services with many features nobody uses. A fake that skips signature checks hides authentication bugs until production. This package is an embeddable `http.Handler` that verifies AWS Signature Version 4 like S3 does and implements the bucket, object, byte-range, `ListObjectsV2`, and multipart upload calls that the official AWS SDK uses most.
 
-Describe in two or three sentences the concrete problem this utility solves, who hits it, and what
-they do today without it. Replace this paragraph when the first real feature lands.
+## Installation
 
-## Install
-
-```sh
+```bash
 go get github.com/Trysac/u917-s3-lite-object-store
 ```
-
-Requires Go 1.23 or newer. No dependencies outside the standard library.
 
 ## Usage
 
 ```go
-package main
-
-import (
-	"errors"
-	"fmt"
-
-	"github.com/Trysac/u917-s3-lite-object-store"
-)
-
-func main() {
-	// Normalize trims surrounding whitespace and lower-cases the text.
-	out, _ := s3liteobjectstore.Normalize("  Hello World ")
-	fmt.Println(out) // -> "hello world"
-
-	// Blank input is rejected explicitly instead of returning an empty string.
-	if _, err := s3liteobjectstore.Normalize("   "); errors.Is(err, s3liteobjectstore.ErrBlank) {
-		fmt.Println("rejected:", err)
-	}
+srv, err := s3liteobjectstore.New(s3liteobjectstore.Config{
+	Credentials: map[string]string{"TESTKEY0": "test-secret-key-0"},
+	Region:      "us-east-1",
+})
+if err != nil {
+	log.Fatal(err)
 }
+ts := httptest.NewServer(srv)
+defer ts.Close()
 ```
 
-## Documentation
+## Public API Summary
 
-- [Architecture](docs/ARCHITECTURE.md) and [decisions](docs/decisions/)
-- [Testing](docs/TESTING.md) and [security](docs/SECURITY.md)
-- [Project record](docs/PROJECT.md) and [stack](docs/STACK.md)
-- [Changelog](CHANGELOG.md) and [contributing guide](CONTRIBUTING.md)
+- `func New(cfg Config) (*Server, error)` where `*Server` implements `http.Handler`.
+- `Config`: `Credentials` map, `Region`, `Store` interface, `Clock` function, `NewRequestID` function, `MaxObjectBytes` (64 MiB default), `MinPartSize` (5 MiB default), `MaxKeysPerList` (1000 default), and `OnEvent` callback.
+- Stores: `NewMemoryStore(maxBytes)` and `NewDirStore(root)` providing atomic persistence.
+- Errors: Returns 400, 403, 404, 409, 416, 501, 503 errors compatible with S3 XML format.
+- Limits: Bucket names 3-63 chars (lowercase, alphanumeric, dots, hyphens), keys 1-1024 bytes (UTF-8), multipart uploads capped at 1000 per server.
+
+## Why not MinIO or LocalStack?
+
+These are heavy external services. `s3-lite-object-store` is an embeddable handler with no external process that still enforces real SigV4 authentication.
+
+## Security
+
+See [docs/SECURITY.md](docs/SECURITY.md) for the complete threat model and limits.
 
 ## License
 
-[MIT](LICENSE) (c) 2026 Miguel Gomez
+MIT

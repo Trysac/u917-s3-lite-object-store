@@ -1,30 +1,20 @@
 # Architecture
 
-## Purpose
+`s3liteobjectstore` is organized into focused components within the root package:
 
-`github.com/Trysac/u917-s3-lite-object-store` is a small, dependency-free Go library: Object store server speaking a subset of the S3 REST API with SigV4 authentication, presigned URLs, multipart uploads and ListObjectsV2
+1. **HTTP Handler & Router (`s3liteobjectstore.go`)**:
+   - Parses path-style routes (`/`, `/bucket`, `/bucket/key`).
+   - Classifies the S3 operation from the HTTP method and query parameters (`list-type=2`, `uploads`, `uploadId`, `partNumber`).
+   - Validates bucket names (3-63 chars, lowercase alphanumeric, `.`, `-`, non-IPv4) and object keys (1-1024 bytes of valid UTF-8).
+   - Bounds request bodies with `http.MaxBytesReader` and verifies the SHA-256 payload digest unless `UNSIGNED-PAYLOAD` is specified.
+   - Formats responses and errors in the `http://s3.amazonaws.com/doc/2006-03-01/` XML namespace.
 
-## Shape
+2. **Signature Version 4 Verifier (`sigv4.go`)**:
+   - Supports both `Authorization: AWS4-HMAC-SHA256 ...` headers and query-string presigned URLs (`X-Amz-Algorithm`, `X-Amz-Credential`, `X-Amz-Date`, `X-Amz-Expires`, `X-Amz-SignedHeaders`, `X-Amz-Signature`).
+   - Builds the canonical request (method, single-encoded path keeping `/`, RFC 3986 sorted query string, lowercase trimmed canonical headers, signed headers, payload hash).
+   - Derives the signing key via the 4-step HMAC-SHA256 chain (`AWS4`+secret -> date -> region -> `s3` -> `aws4_request`) and compares signatures in constant time with `hmac.Equal`.
 
-```text
-caller code --> package s3liteobjectstore (repository root)
-                    |
-                    +-- pure functions, no I/O, no global mutable state
-                    +-- internal/ (optional private helpers)
-```
-
-- **Public API**: every exported identifier of the root package. Unexported identifiers and
-  `internal/` packages may change without a major version.
-- **Errors**: invalid input returns an error; exported sentinel errors (such as `ErrBlank`) let
-  callers branch with `errors.Is`. The library never panics on input, prints or exits.
-- **Side effects**: none. If a feature needs I/O, accept an interface (`io.Reader` or a small
-  custom one) instead of opening resources, and record the choice in an ADR.
-
-## Quality contract
-
-`scripts/check` is the single definition of the gates; `fabrica.json` tells the factory and CI
-how to run it. See [TESTING.md](TESTING.md).
-
-## Decisions
-
-Architecture decisions are recorded in [decisions/](decisions/) as numbered ADRs.
+3. **Storage Backends (`store.go`, `memory_store.go`, `dir_store.go`)**:
+   - `Store` defines concurrency-safe bucket, object, listing, and multipart operations taking `context.Context`.
+   - `NewMemoryStore(maxBytes)` tracks total byte usage across objects and in-progress multipart uploads, refusing writes beyond `maxBytes` with `503 ServiceUnavailable` (`store full`).
+   - `NewDirStore(root)` persists each object at `root/<bucket>/<hex-sha256-of-key>` with a `<hex-sha256-of-key>.json` sidecar, writing via a temporary file and `os.Rename` to guarantee atomic updates and prevent path traversal.
